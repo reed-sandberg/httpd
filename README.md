@@ -1,4 +1,54 @@
+# Safe pipe fork of Apache HTTP Server
 
+If for some reason you don't know what the Apache HTTP Server is, see below.
+The HTTP server is what "started it all".
+
+This fork addresses a long-standing limitation of log record sizes when using
+piped logs ([reported here](https://bz.apache.org/bugzilla/show_bug.cgi?id=54339)).
+With piped logs (`|` option), log records are piped to a separate program that
+can batch/rotate log records or do whatever your heart desires with them.
+A popular use-case is having `rotatelogs` receive the log records for flexible
+log rotation without having to HUP the server, etc.
+
+Depending on your OS, there may be an atomic buffer limit for data sent over a pipe,
+beyond which, data may be interleaved (e.g. 4KB for Linux). What this means is
+that if you have multiple writers to the pipe, the output may be corrupted.
+With apache, you most certainly will have concurrent writers to the pipe, so
+if your log records exceed this limit, your log files will be sawdust. To be
+fair, most sites will not be affected as typical log records
+are well under the pipe buffer limit (PIPE_BUF on Linux). If you find yourself
+approaching an edge case, this fix is for you.
+
+### Usage
+
+#### Patch Apache (merge the fix)
+
+* Use the `ASF-54339-interleaved-logs-2.4.33` branch to patch v2.4.
+* Or if you're on the bleeding edge, check out the `ASF-54339-interleaved-logs-2.5-HEAD` branch.
+
+#### Log configuration
+
+For piped log streams in your configuration that use `rotatelogs`,
+where log records are extra wide, replace `|` with `|<` (mnemonic, split pipe).
+This will split log records across the pipe into smaller chunks (within the
+atomic size guarantee) so they may be reassembled by the piped
+program to preserve their integrity. The program receiving the
+records must know how to reassemble the records, and currently,
+rotatelogs supports this. When used, a variable
+(AP_MOD_LOG_CONFIG_CHUNKED_MSG) is exported to the environment
+so the receiving program can take appropriate action. This option
+may be used in conjunction with the shell option `|<$` (or for
+compatibility `||<`).
+This option is not available for ErrorLog directives and if
+present, a warning will be emitted.
+
+Example:
+```
+CustomLog "|</usr/local/apache/bin/rotatelogs   /var/log/access_log 86400" common
+```
+
+
+```
                           Apache HTTP Server
 
   What is it?
@@ -108,3 +158,4 @@
        subscribe to the `dev@httpd.apache.org' mailing list as described at
        <http://httpd.apache.org/lists.html#http-dev>
 
+```
